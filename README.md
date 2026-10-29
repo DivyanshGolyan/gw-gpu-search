@@ -33,6 +33,16 @@ times. That estimate is the false-alarm rate.
 | One week, steady rate | 1 week of H1 and L1 data | $0.142 | One A40 GPU at $0.59 per hour. Filtering takes 868 GPU-seconds per week. |
 | Ranking | 1 week | CPU only | 354 seconds on 4 CPU cores. |
 
+Building and testing the pipeline cost more than running it. The whole project, from the first benchmark on
+2026-10-27 to the end of O4b, cost about $33 in billed cloud time:
+
+| Item | Cost | Source |
+| --- | --- | --- |
+| RunPod GPU and CPU pods, 2026-10-27 and 10-28 (development, tests, O4a) | $27.59 | RunPod billing API, 185 pods |
+| RunPod network storage | $0.66 | RunPod billing API |
+| Vast.ai GPUs (O4b, including tests) | $4.53 | Vast.ai credit used |
+| RunPod relay pods on 2026-10-29 | about $0.25 | Estimated. The billing API had no rows for that day yet. |
+
 The O4b run missed our target of $0.15 per week. It cost $0.26 per week, because the GPUs spent much of the
 time waiting for data downloads. [docs/lab-notes/O4B_RUN.md](docs/lab-notes/O4B_RUN.md) breaks the cost down.
 
