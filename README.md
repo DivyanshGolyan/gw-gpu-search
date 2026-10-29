@@ -42,6 +42,20 @@ The cost ratio depends on what a CPU core-hour costs. One A40-hour does the work
 | 0.015 (spot, central) | 2.73 | 19x | 14x |
 | 0.030 | 5.46 | 38x | 27x |
 
+How solid this comparison is:
+
+- The PyCBC rate comes from two single-core jobs (72.3 s and 72.6 s) on one CPU model, with an 814-template
+  bank on 12,112 s of O4a data. The main check is that it agrees with the published production rate.
+- About half of each PyCBC job is data preparation, which PyCBC repeats for every split of the bank. Filtering
+  alone is 0.057 core-s. A PyCBC run with fewer, larger splits could be up to ~2x cheaper than the table shows.
+- PyCBC can also run on a GPU. As shipped, it was no cheaper than CPU. With about 8 processes per GPU we project
+  ~0.0008 A40-s per template per 1,000 s. That is a projection, not an end-to-end measurement. Against that
+  setup our filter would be ~5x cheaper, not 19x.
+- Our own cost varies by machine. On O4b the boxes ranged from $0.141 to $0.209 per 942 detector-ks. Most of them
+  were limited by download speed from GWOSC (GPU busy 38-83% of the job), not by the GPU.
+
+Sources: [docs/lab-notes/PYCBC_BASELINE.md](docs/lab-notes/PYCBC_BASELINE.md) and [docs/lab-notes/O4B_RUN.md](docs/lab-notes/O4B_RUN.md).
+
 ### Sensitivity
 
 - On three held-out O4a weeks, using LVK's own injection set, we find **0.935** of the injections PyCBC finds,

@@ -3,7 +3,6 @@ bffc1d3921689c006b3451cd3a9a690a  ./data/banks/vt_45_100_mm0.85.hdf
 b2b6e958c5680b41cb04b99e8e3e68fe  ./data/inspiral_argv_H1_000.txt
 b9ec36a3f8195d59f7c4e021fb93f6e5  ./data/o4_known.csv
 8dacafa7aa59eed8e724aa57cd2615e2  ./data/phasetd_H1L1.npz
-6bfd0e02503b936724c9c210585030c6  ./pipeline/__pycache__/ranking_stat.cpython-311.pyc
 58b34d7a9f6716c50c12e452b798c56f  ./pipeline/candidates.py
 ff1df9065b24c7a4fcfbc6d604918ba0  ./pipeline/chisq_edges.py
 8f0af8a7dad6f3abe066fd296b1bc74f  ./pipeline/chisq_kernel.py
