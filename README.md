@@ -1,110 +1,118 @@
 # gw-gpu-search
 
-A low-cost GPU search for binary black hole mergers in public LIGO data. It searched all of the O4a and O4b
-open data from H1 and L1 (232 days of time when both detectors were observing) for about **$11 of rented GPU
-time, as billed**. That figure includes every restart and failed test. The search has two layers: a standard
-aligned-spin template bank and an eccentric-orbit bank (SEOBNRv5EHM). Significance comes from time slides.
+gw-gpu-search looks for merging black holes in public LIGO data, on rented GPUs. We ran it over all of the
+O4a and O4b open data from the two LIGO detectors, H1 and L1. That is 232 days in which both detectors were
+recording. The run cost about $11, as billed, including every failed test and restart.
 
-The search found **no new candidates** below a false-alarm rate of 1 per year. It recovered 111 of the 153
-catalogued events (GWTC) that have a catalogue false-alarm rate below 1 per year. See
-[results/O4_SUMMARY.md](results/O4_SUMMARY.md).
+The search found no new merger candidates. It found 111 of the 153 known mergers that the official catalogues
+report with fewer than 1 false alarm per year. [results/O4_SUMMARY.md](results/O4_SUMMARY.md) has the details.
 
-## Measured results
+## How the search works
 
-All numbers here are measured unless the table says otherwise. The lab notes in [docs/lab-notes](docs/lab-notes)
-have the sources.
+The pipeline compares the detector data with a set of predicted signals, called templates. Each template is the
+waveform of one kind of merger. The search uses two template sets:
+
+- 4,612 standard templates for black holes on circular orbits (`data/banks/bank_v2.hdf`).
+- 1,268 templates for black holes on eccentric, or oval, orbits (`data/banks/vt_45_100_mm0.85.hdf`).
+  The standard LIGO template searches of O4 don't use eccentric templates.
+
+The pipeline keeps a match only if both detectors see it within a few milliseconds of each other. To estimate how often noise alone
+produces a match that loud, the pipeline shifts one detector's data in time and repeats the comparison 40,000
+times. That estimate is the false-alarm rate.
+
+## What we measured
 
 ### Cost
 
-| Run | Data | Billed | Notes |
+| Run | Data | Cost | Notes |
 | --- | --- | --- | --- |
-| O4a filtering | 34 weeks | $5.66 (RunPod billing API) | About half of this was overhead: low GPU use before a fix, tests, and stop/relaunch rounds. At the steady rate the same data costs ~$2.9 |
-| O4b filtering | 37 weeks | ~$5.42 | Vast.ai $4.53 measured from credit. The relay pod (~$0.89) is estimated from the RunPod balance drop. Includes re-filtering 4 weeks whose outputs were lost |
-| Steady state | per week of H1+L1 (942 detector-ks) | $0.142 | A40 at $0.59/h, GPU-bound (868 GPU-s per week) |
-| Ranking | per week | CPU only | 354 s per week on 4 vCPUs |
+| O4a | 34 weeks | $5.66 | From the RunPod bill. About half was overhead from tests and restarts. At the steady rate, the same data costs about $2.90. |
+| O4b | 37 weeks | about $5.42 | $4.53 from Vast.ai credit. The relay server (about $0.89) is estimated. Includes 4 weeks that we filtered twice after a storage failure. |
+| One week, steady rate | 1 week of H1 and L1 data | $0.142 | One A40 GPU at $0.59 per hour. Filtering takes 868 GPU-seconds per week. |
+| Ranking | 1 week | CPU only | 354 seconds on 4 CPU cores. |
 
-The O4b run missed its own target of $0.15/week (it came in at $0.26 per 942 detector-ks all-in). The GPUs spent
-most of their time waiting on downloads from GWOSC. [docs/lab-notes/O4B_RUN.md](docs/lab-notes/O4B_RUN.md) has
-the breakdown.
+The O4b run missed our target of $0.15 per week. It cost $0.26 per week, because the GPUs spent much of the
+time waiting for data downloads. [docs/lab-notes/O4B_RUN.md](docs/lab-notes/O4B_RUN.md) breaks the cost down.
 
 ### Comparison with PyCBC
 
-With the same 5,880 templates (4,612 aligned + 1,268 eccentric), PyCBC on CPU needs 0.118 core-seconds per
-template per 1,000 s of data. We measured that on a Xeon 6342, and it matches the published 0.11-0.14
-(Soni & Nitz, arXiv:2409.11317, Table 4). That is **182 core-hours per week of H1+L1**. Our filter takes 0.000157
-A40-seconds for the same unit of work.
+PyCBC is one of the standard LIGO search pipelines. With our 5,880 templates, PyCBC on CPUs needs 182 core-hours
+to filter one week of data. We measured PyCBC's speed on an Intel Xeon 6342. It matches the published figure in
+Soni & Nitz, arXiv:2409.11317, Table 4.
 
-The cost ratio depends on what a CPU core-hour costs. One A40-hour does the work of about 750 core-hours.
+One A40 GPU-hour does about the work of 750 CPU core-hours. The saving in dollars depends on the price of
+a CPU core-hour:
 
-| CPU price ($/core-hour) | PyCBC $/week | vs our filter ($0.142) | vs our all-in (~$0.20) |
+| CPU price per core-hour | PyCBC cost per week | Our filter is cheaper by | Our whole run (about $0.20 per week) is cheaper by |
 | --- | --- | --- | --- |
-| 0.010 | 1.82 | 13x | 9x |
-| 0.015 (spot, central) | 2.73 | 19x | 14x |
-| 0.030 | 5.46 | 38x | 27x |
+| $0.010 | $1.82 | 13x | 9x |
+| $0.015 (typical spot price) | $2.73 | 19x | 14x |
+| $0.030 | $5.46 | 38x | 27x |
 
-How solid this comparison is:
+These numbers have limits:
 
-- The PyCBC rate comes from two single-core jobs (72.3 s and 72.6 s) on one CPU model, with an 814-template
-  bank on 12,112 s of O4a data. The main check is that it agrees with the published production rate.
-- About half of each PyCBC job is data preparation, which PyCBC repeats for every split of the bank. Filtering
-  alone is 0.057 core-s. A PyCBC run with fewer, larger splits could be up to ~2x cheaper than the table shows.
-- PyCBC can also run on a GPU. As shipped, it was no cheaper than CPU. With about 8 processes per GPU we project
-  ~0.0008 A40-s per template per 1,000 s. That is a projection, not an end-to-end measurement. Against that
-  setup our filter would be ~5x cheaper, not 19x.
-- Our own cost varies by machine. On O4b the boxes ranged from $0.141 to $0.209 per 942 detector-ks. Most of them
-  were limited by download speed from GWOSC (GPU busy 38-83% of the job), not by the GPU.
+- The PyCBC speed comes from two jobs on one CPU model. Its agreement with the published figure is the main check.
+- About half of each PyCBC job prepares the data, and PyCBC repeats that step for each part of the template set.
+  A PyCBC setup that avoids the repeats could cost up to half as much as the table shows.
+- PyCBC can also run on GPUs. We estimate that a well-tuned PyCBC GPU setup costs about 5 times what ours does,
+  not 19 times. That figure is an estimate. We haven't measured it.
+- Our cost depends on the machine. On O4b, the cost per week ranged from $0.141 to $0.209.
+  Download speed set the cost on most machines.
 
-Sources: [docs/lab-notes/PYCBC_BASELINE.md](docs/lab-notes/PYCBC_BASELINE.md) and [docs/lab-notes/O4B_RUN.md](docs/lab-notes/O4B_RUN.md).
+[docs/lab-notes/PYCBC_BASELINE.md](docs/lab-notes/PYCBC_BASELINE.md) describes the PyCBC measurement.
 
 ### Sensitivity
 
-- On three held-out O4a weeks, using LVK's own injection set, we find **0.935** of the injections PyCBC finds,
-  each pipeline using its own false-alarm rates.
-- The eccentric layer finds **1.29x** [1.22, 1.37] as many eccentric signals (e20 >= 0.15, total mass 45-100)
-  as the aligned layer alone. The test was pre-registered and run on held-out data. A placebo second layer gave 1.01x.
+To test sensitivity, LIGO adds fake signals to real data. These fake signals are called injections. We used
+LIGO's own O4a injections on three weeks that we kept out of development:
 
-### Not yet measured
+- Our search finds 0.935 of the injections that PyCBC finds. Each pipeline uses its own false-alarm rates.
+- With the eccentric templates added, the search finds 1.29 times as many eccentric signals as it finds with
+  the standard templates alone (90% range 1.22 to 1.37). The test applies to signals with eccentricity of at
+  least 0.15 and total mass from 45 to 100 solar masses. We wrote down the pass rule before the run. As a
+  control, an extra set of standard templates gave 1.01 times.
 
-- Sensitivity on O4b: no injections were run on O4b.
-- How much sensitivity the coarse eccentric bank (minimal match 0.85) gives up against a standard dense bank
-  (0.97). Until that test runs, the eccentric cost advantage counts only the speedup on the same templates.
+### What we haven't measured
 
-## Layout
+- Sensitivity on O4b. We ran no injections on O4b.
+- How much sensitivity our sparse eccentric template set loses against a standard dense one. Until we measure
+  that, the eccentric cost saving counts only the speedup on the same templates.
 
-| Path | What it is |
+## Repository contents
+
+| Path | Contents |
 | --- | --- |
-| `pipeline/` | The code exactly as run in production (byte-identical, see `MD5SUMS`). Flat module layout: modules import each other by name |
-| `pipeline/fp_filter.py` | GPU filter: SVD of the template bank, matched filtering as tensor-core matrix multiplies, peak finding, then exact SNR and chi-squared for surviving peaks (`exact_stage.py`) |
-| `pipeline/coinc_rank.py`, `ranking_stat.py`, `rank_week.sh` | H1-L1 coincidence, likelihood-ratio ranking statistic, 40,000 time slides per chunk, false-alarm rates |
-| `pipeline/pool_far.py`, `candidates.py` | Layer combination (2 x the lower layer's FAR) and cross-match against known events |
-| `pipeline/ecc_*.py` | Eccentric template generation and bank placement |
-| `data/banks/` | The aligned bank (`bank_v2.hdf`, IMRPhenomD) and the eccentric bank (`vt_45_100_mm0.85.hdf`, SEOBNRv5EHM) |
-| `data/segments/` | The exact analysed time per week (GWOSC data segments) |
-| `data/o4_known.csv` | 13,225 known events and candidates used for the cross-match |
-| `ops/` | The scripts that ran the cloud jobs on RunPod and Vast.ai. These are specific to our setup; see REPRODUCE.md |
-| `tests/` | Self-tests. `test_coinc_rank.py` runs on CPU; the others need a GPU |
-| `results/` | O4a and O4b results and the PyCBC audit |
-| `docs/lab-notes/` | The freeze record, pre-registrations, pilot report and bills, as written during the run |
+| `pipeline/` | The code as it ran in production. `MD5SUMS` proves that each file is unchanged. The modules import each other by name, so run them from this directory. |
+| `pipeline/fp_filter.py` | The GPU filter. It compresses the template set with an SVD, runs the comparison as matrix multiplies on the GPU, and computes exact values for the loudest matches in `exact_stage.py`. |
+| `pipeline/coinc_rank.py`, `ranking_stat.py`, `rank_week.sh` | Matching between detectors, the ranking statistic, the time shifts, and the false-alarm rates. |
+| `pipeline/pool_far.py`, `candidates.py` | Combining the two template sets, and checking candidates against known events. |
+| `pipeline/ecc_*.py` | Making the eccentric templates and choosing where to place them. |
+| `data/banks/` | The two template sets. |
+| `data/segments/` | The exact stretches of data analysed in each week. |
+| `data/o4_known.csv` | 13,225 known events and candidates from the catalogues and public alerts. |
+| `ops/` | The scripts that ran the jobs on RunPod and Vast.ai. They depend on our cloud setup. |
+| `tests/` | Self-tests. `test_coinc_rank.py` runs on a CPU. The others need a GPU. |
+| `results/` | The O4a and O4b results, and our audit of the PyCBC comparison. |
+| `docs/lab-notes/` | Notes written during the run: frozen settings, pre-registered tests, the pilot report and the bills. |
 
-## Reproducing
+## Run it yourself
 
-See [REPRODUCE.md](REPRODUCE.md). In short: you need Python 3.11, a CUDA 12 GPU with at least 24 GB of memory,
-and the packages in `environment/`. Filter a week, rank it, then combine the layers.
+[REPRODUCE.md](REPRODUCE.md) lists the steps. You need Python 3.11, an NVIDIA GPU with CUDA 12 and at least
+24 GB of memory, and the packages in `environment/`.
 
-## Provenance
+## How we made the results traceable
 
-Every production filter run wrote a `config_md5` into its output and logged itself to an analysis history.
-`docs/lab-notes/FREEZE.md` lists every frozen file with its md5 and every change made during the run, with
-the reason. GPU reruns agree to float32 rounding, but they are not bit-identical. Week 1 of O4a was used for
-development and is excluded from all results.
+Each filter run recorded a fingerprint of its settings (`config_md5`) in its output. [docs/lab-notes/FREEZE.md](docs/lab-notes/FREEZE.md)
+lists every frozen file, and every change made during the run with its reason. Runs on a GPU repeat to within
+float32 rounding, but not bit for bit. We used week 1 of O4a to develop the pipeline, so no result uses it.
 
-## How this was built
+## How we built it
 
-The code was written over a few days by one engineer working with AI coding agents (Claude). Every result
-above was checked by measurement, and the lab notes record each check. Please open an issue for any error you find.
+One software engineer wrote this code in a few days with AI coding agents (Claude). We checked each result by
+measurement, and the lab notes record each check. If you find an error, open an issue.
 
 ## License
 
-GPL-3.0-or-later, to match PyCBC and LALSuite, which this code imports. See [LICENSE](LICENSE).
-Strain data comes from the Gravitational Wave Open Science Center (GWOSC); please cite and acknowledge
-GWOSC as its terms ask.
+GPL-3.0-or-later, because the code imports PyCBC and LALSuite, which use the GPL. See [LICENSE](LICENSE).
+The data comes from the Gravitational Wave Open Science Center (GWOSC). If you use it, cite GWOSC as its
+terms ask.

@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "gw-gpu-search: a low-cost GPU search for binary black holes in LIGO O4 open data"
+title: "gw-gpu-search: a low-cost GPU search for merging black holes in public LIGO O4 data"
 authors:
   - family-names: Golyan
     given-names: Divyansh
