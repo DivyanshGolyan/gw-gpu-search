@@ -5,7 +5,9 @@ O4a and O4b open data from the two LIGO detectors, H1 and L1. That is 232 days i
 recording. The run cost about $11, as billed, including every failed test and restart.
 
 The search found no new merger candidates. It found 111 of the 153 known mergers that the official catalogues
-report with fewer than 1 false alarm per year. [results/O4_SUMMARY.md](results/O4_SUMMARY.md) has the details.
+report with fewer than 1 false alarm per year. Of the 101 mergers that PyCBC, a standard LIGO pipeline,
+finds with high confidence, it found 99. [results/O4_SUMMARY.md](results/O4_SUMMARY.md) has the details, and
+[results/missed_events](results/missed_events/README.md) explains the misses.
 
 ## How the search works
 
