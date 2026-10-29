@@ -1,0 +1,210 @@
+{
+ "rule": "weeks under 2 d live are ranked with the smaller adjacent week in the same observing stretch (RANKING_AT_SCALE.md)",
+ "chunks": [
+  {
+   "chunk": "wk40+wk41",
+   "weeks": [
+    "wk40",
+    "wk41"
+   ],
+   "live_days": 5.21
+  },
+  {
+   "chunk": "wk42",
+   "weeks": [
+    "wk42"
+   ],
+   "live_days": 4.0
+  },
+  {
+   "chunk": "wk43",
+   "weeks": [
+    "wk43"
+   ],
+   "live_days": 3.47
+  },
+  {
+   "chunk": "wk44",
+   "weeks": [
+    "wk44"
+   ],
+   "live_days": 4.69
+  },
+  {
+   "chunk": "wk45",
+   "weeks": [
+    "wk45"
+   ],
+   "live_days": 2.47
+  },
+  {
+   "chunk": "wk46",
+   "weeks": [
+    "wk46"
+   ],
+   "live_days": 2.73
+  },
+  {
+   "chunk": "wk47",
+   "weeks": [
+    "wk47"
+   ],
+   "live_days": 3.75
+  },
+  {
+   "chunk": "wk48",
+   "weeks": [
+    "wk48"
+   ],
+   "live_days": 4.43
+  },
+  {
+   "chunk": "wk49+wk50",
+   "weeks": [
+    "wk49",
+    "wk50"
+   ],
+   "live_days": 5.29
+  },
+  {
+   "chunk": "wk51",
+   "weeks": [
+    "wk51"
+   ],
+   "live_days": 4.48
+  },
+  {
+   "chunk": "wk52",
+   "weeks": [
+    "wk52"
+   ],
+   "live_days": 3.73
+  },
+  {
+   "chunk": "wk53",
+   "weeks": [
+    "wk53"
+   ],
+   "live_days": 2.31
+  },
+  {
+   "chunk": "wk54",
+   "weeks": [
+    "wk54"
+   ],
+   "live_days": 2.42
+  },
+  {
+   "chunk": "wk60+wk61",
+   "weeks": [
+    "wk60",
+    "wk61"
+   ],
+   "live_days": 4.41
+  },
+  {
+   "chunk": "wk62",
+   "weeks": [
+    "wk62"
+   ],
+   "live_days": 4.1
+  },
+  {
+   "chunk": "wk63",
+   "weeks": [
+    "wk63"
+   ],
+   "live_days": 2.86
+  },
+  {
+   "chunk": "wk64",
+   "weeks": [
+    "wk64"
+   ],
+   "live_days": 4.27
+  },
+  {
+   "chunk": "wk65",
+   "weeks": [
+    "wk65"
+   ],
+   "live_days": 3.13
+  },
+  {
+   "chunk": "wk66+wk67",
+   "weeks": [
+    "wk66",
+    "wk67"
+   ],
+   "live_days": 5.15
+  },
+  {
+   "chunk": "wk70+wk71",
+   "weeks": [
+    "wk70",
+    "wk71"
+   ],
+   "live_days": 2.93
+  },
+  {
+   "chunk": "wk72+wk73",
+   "weeks": [
+    "wk72",
+    "wk73"
+   ],
+   "live_days": 3.48
+  },
+  {
+   "chunk": "wk74",
+   "weeks": [
+    "wk74"
+   ],
+   "live_days": 4.57
+  },
+  {
+   "chunk": "wk75",
+   "weeks": [
+    "wk75"
+   ],
+   "live_days": 3.6
+  },
+  {
+   "chunk": "wk76",
+   "weeks": [
+    "wk76"
+   ],
+   "live_days": 2.97
+  },
+  {
+   "chunk": "wk77+wk78",
+   "weeks": [
+    "wk77",
+    "wk78"
+   ],
+   "live_days": 6.49
+  },
+  {
+   "chunk": "wk79",
+   "weeks": [
+    "wk79"
+   ],
+   "live_days": 5.72
+  },
+  {
+   "chunk": "wk80+wk81",
+   "weeks": [
+    "wk80",
+    "wk81"
+   ],
+   "live_days": 5.61
+  },
+  {
+   "chunk": "wk82+wk83",
+   "weeks": [
+    "wk82",
+    "wk83"
+   ],
+   "live_days": 3.97
+  }
+ ]
+}

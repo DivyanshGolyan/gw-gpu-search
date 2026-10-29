@@ -1,0 +1,193 @@
+{
+ "start": 1396417050,
+ "end": 1422118818,
+ "n_spans": 849,
+ "coinc_s": 9764236,
+ "weeks": {
+  "wk40": {
+   "n_pieces": 16,
+   "analysed_s": 106775,
+   "data_s": 108727
+  },
+  "wk41": {
+   "n_pieces": 43,
+   "analysed_s": 343364,
+   "data_s": 349108
+  },
+  "wk42": {
+   "n_pieces": 48,
+   "analysed_s": 345352,
+   "data_s": 351112
+  },
+  "wk43": {
+   "n_pieces": 39,
+   "analysed_s": 299624,
+   "data_s": 304664
+  },
+  "wk44": {
+   "n_pieces": 55,
+   "analysed_s": 405543,
+   "data_s": 412247
+  },
+  "wk45": {
+   "n_pieces": 35,
+   "analysed_s": 213184,
+   "data_s": 217040
+  },
+  "wk46": {
+   "n_pieces": 52,
+   "analysed_s": 236158,
+   "data_s": 241086
+  },
+  "wk47": {
+   "n_pieces": 59,
+   "analysed_s": 323590,
+   "data_s": 329846
+  },
+  "wk48": {
+   "n_pieces": 45,
+   "analysed_s": 382875,
+   "data_s": 388875
+  },
+  "wk49": {
+   "n_pieces": 13,
+   "analysed_s": 101803,
+   "data_s": 103515
+  },
+  "wk50": {
+   "n_pieces": 44,
+   "analysed_s": 354859,
+   "data_s": 360587
+  },
+  "wk51": {
+   "n_pieces": 48,
+   "analysed_s": 386756,
+   "data_s": 392900
+  },
+  "wk52": {
+   "n_pieces": 51,
+   "analysed_s": 322046,
+   "data_s": 327662
+  },
+  "wk53": {
+   "n_pieces": 35,
+   "analysed_s": 199353,
+   "data_s": 202825
+  },
+  "wk54": {
+   "n_pieces": 34,
+   "analysed_s": 208830,
+   "data_s": 212510
+  },
+  "wk60": {
+   "n_pieces": 7,
+   "analysed_s": 49223,
+   "data_s": 50071
+  },
+  "wk61": {
+   "n_pieces": 42,
+   "analysed_s": 331550,
+   "data_s": 336542
+  },
+  "wk62": {
+   "n_pieces": 51,
+   "analysed_s": 353976,
+   "data_s": 359784
+  },
+  "wk63": {
+   "n_pieces": 36,
+   "analysed_s": 247527,
+   "data_s": 252039
+  },
+  "wk64": {
+   "n_pieces": 53,
+   "analysed_s": 368907,
+   "data_s": 375355
+  },
+  "wk65": {
+   "n_pieces": 45,
+   "analysed_s": 270197,
+   "data_s": 274853
+  },
+  "wk66": {
+   "n_pieces": 49,
+   "analysed_s": 314739,
+   "data_s": 320003
+  },
+  "wk67": {
+   "n_pieces": 28,
+   "analysed_s": 130476,
+   "data_s": 133196
+  },
+  "wk70": {
+   "n_pieces": 21,
+   "analysed_s": 112270,
+   "data_s": 114334
+  },
+  "wk71": {
+   "n_pieces": 21,
+   "analysed_s": 140941,
+   "data_s": 143197
+  },
+  "wk72": {
+   "n_pieces": 31,
+   "analysed_s": 166418,
+   "data_s": 169474
+  },
+  "wk73": {
+   "n_pieces": 22,
+   "analysed_s": 134257,
+   "data_s": 136497
+  },
+  "wk74": {
+   "n_pieces": 51,
+   "analysed_s": 395092,
+   "data_s": 401380
+  },
+  "wk75": {
+   "n_pieces": 37,
+   "analysed_s": 311037,
+   "data_s": 316109
+  },
+  "wk76": {
+   "n_pieces": 35,
+   "analysed_s": 256566,
+   "data_s": 260710
+  },
+  "wk77": {
+   "n_pieces": 47,
+   "analysed_s": 394442,
+   "data_s": 400698
+  },
+  "wk78": {
+   "n_pieces": 27,
+   "analysed_s": 166532,
+   "data_s": 169556
+  },
+  "wk79": {
+   "n_pieces": 56,
+   "analysed_s": 494417,
+   "data_s": 502257
+  },
+  "wk80": {
+   "n_pieces": 24,
+   "analysed_s": 145757,
+   "data_s": 148349
+  },
+  "wk81": {
+   "n_pieces": 42,
+   "analysed_s": 339289,
+   "data_s": 344761
+  },
+  "wk82": {
+   "n_pieces": 40,
+   "analysed_s": 239139,
+   "data_s": 243395
+  },
+  "wk83": {
+   "n_pieces": 13,
+   "analysed_s": 103452,
+   "data_s": 105068
+  }
+ }
+}

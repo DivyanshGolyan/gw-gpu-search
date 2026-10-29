@@ -1,0 +1,14 @@
+# Versions used in production (full pod environment: pip_freeze_pod.txt). Python 3.11, CUDA 12.
+numpy==2.2.6
+scipy==1.15.3
+h5py==3.16.0
+astropy==6.1.7
+gwosc==0.8.3
+PyCBC==2.8.3
+lalsuite==7.26.16
+cupy-cuda12x==14.2.0
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.4.1+cu124
+triton==3.0.0
+# eccentric layer (needs GSL; see REPRODUCE.md)
+pyseobnr==0.3.7
