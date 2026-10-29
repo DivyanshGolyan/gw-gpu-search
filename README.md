@@ -1,5 +1,7 @@
 # gw-gpu-search
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23761181.svg)](https://doi.org/10.5281/zenodo.23761181)
+
 gw-gpu-search looks for merging black holes in public LIGO data, on rented GPUs. We ran it over all of the
 O4a and O4b open data from the two LIGO detectors, H1 and L1. That is 232 days in which both detectors were
 recording. The run cost about $11, as billed, including every failed test and restart.
@@ -128,3 +130,8 @@ measurement, and the lab notes record each check. If you find an error, open an 
 GPL-3.0-or-later, because the code imports PyCBC and LALSuite, which use the GPL. See [LICENSE](LICENSE).
 The data comes from the Gravitational Wave Open Science Center (GWOSC). If you use it, cite GWOSC as its
 terms ask.
+
+## Cite this code
+
+Cite the archived release on Zenodo: [doi:10.5281/zenodo.23761181](https://doi.org/10.5281/zenodo.23761181).
+That DOI always points to the latest version. `CITATION.cff` has the details.
