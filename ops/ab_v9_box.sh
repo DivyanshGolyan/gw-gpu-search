@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-shot Vast box: A/B of fp_filter v9 (seg_pipe.py overlap) against the frozen v8 on two O4a wk09 groups.
-# Runs v8, v9, v8, v9 on the same downloaded data (first run also warms the kernel caches), then prints one RESULT
+# Base bank only (no eccentric --bank2: pyseobnr's pygsl-lite build fails on this image). Runs v8, v9, v8, v9 on the same downloaded data (first run also warms the kernel caches), then prints one RESULT
 # block (bitwise peak comparison, counters, timings, GPU busy) to the container log and destroys the box.
 # Env: BRANCH (git branch with v9), COMMIT (optional, checked out), MAXMIN (kill timer, minutes; default 70).
 set -uo pipefail
@@ -27,9 +27,7 @@ split -l 13 -d /work/grp/all.txt /work/grp/g; T0=$SECONDS
 grep -v -E '^(torch|torchvision|torchaudio|triton|nvidia-|filelock)' environment/pip_freeze_pod.txt > /work/cons.txt || true
 grep -v -E '^(torch|triton|--extra-index-url|pyseobnr)' environment/requirements.txt > /work/req.txt
 pip install -q -r /work/req.txt -c /work/cons.txt > /work/out/pip.txt 2>&1 || { tail -20 /work/out/pip.txt; false; }
-pip install -q "setuptools<70" wheel numpy==2.2.6 > /dev/null; pip install -q pygsl-lite --no-build-isolation > /dev/null 2>&1 || true
-pip install -q pyseobnr==0.3.7 "filelock>=3.16" > /work/out/pip2.txt 2>&1 || { tail -20 /work/out/pip2.txt; false; }
-python3 -c "import pycbc, cupy, pyseobnr, torch, triton; print('env', torch.__version__, cupy.__version__, triton.__version__, torch.cuda.get_device_name(0))"
+python3 -c "import pycbc, cupy, torch, triton; print('env', torch.__version__, cupy.__version__, triton.__version__, torch.cuda.get_device_name(0))"
 say "env ready after $((SECONDS-T0)) s"
 python3 tests/test_scale_gpu.py > /work/out/scale.txt 2>&1 || true; cat /work/out/scale.txt
 until grep -q '^done' /work/out/dl.txt; do sleep 5; done
@@ -41,8 +39,7 @@ sed -i 's/--snr-threshold [0-9.]*/--snr-threshold 4/; s/--keep-loudest-num [0-9]
 grep -q -- '--low-frequency-cutoff 20 ' argv_base.txt
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=1 CUPY_CACHE_DIR=/work/cupy
 FLAGS=(--tile 512 --prep gpu --prep-procs 4 --gen-threads 6 --gemm-cfg 64,64,4,2 --exact-snr 5.5 --fuse-q --sg-batch --sg-kernel
-       --exact-stage regen --consolidate --consolidate-exempt-snr 5 --pre-consolidate
-       --bank2 /work/r/data/banks/vt_45_100_mm0.85.hdf --approximant2 SEOBNRv5EHM_ecc --eps2 0.02 --history /work/out/hist.jsonl)
+       --exact-stage regen --consolidate --consolidate-exempt-snr 5 --pre-consolidate --history /work/out/hist.jsonl)
 SG=(--sgchisq-snr-threshold 6 --sgchisq-locations "mtotal>30:20-15,20-30,20-45,20-60,20-75,20-90,20-105,20-120")
 for R in v8a v9a v8b v9b; do
   F=/work/r/pipeline/fp_filter.py; [ ${R:0:2} = v8 ] && F=/work/r/pipeline/fp_filter_v8.py
