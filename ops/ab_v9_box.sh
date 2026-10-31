@@ -6,9 +6,9 @@
 set -uo pipefail
 mkdir -p /work/out; touch /work/out/log; (tail -n +1 -F /work/out/log > /proc/1/fd/1 2>/dev/null &); exec >> /work/out/log 2>&1
 say() { echo "AB $(date -u +%T) $*"; }
-bye() { say "destroying box"; curl -s -X DELETE "https://console.vast.ai/api/v0/instances/$CONTAINER_ID/" -H "Authorization: Bearer $CONTAINER_API_KEY"; sleep 600; }
-( sleep $(( ${MAXMIN:-70} * 60 )); say "KILL TIMER"; bye ) &
-trap 'say "FAILED at line $LINENO"; bye' ERR
+bye() { say "destroying box in ${1:-0} s"; sleep ${1:-0}; curl -s -X DELETE "https://console.vast.ai/api/v0/instances/$CONTAINER_ID/" -H "Authorization: Bearer $CONTAINER_API_KEY"; sleep 600; }
+( sleep $(( ${MAXMIN:-70} * 60 )); say "KILL TIMER"; bye 60 ) &
+trap 'say "FAILED at line $LINENO: $BASH_COMMAND"; tail -5 /work/out/pip*.txt 2>/dev/null; bye 180' ERR
 set -e
 cd /work
 apt-get update -qq > /dev/null && apt-get install -y -qq git curl unzip libgsl-dev swig > /dev/null
@@ -75,4 +75,4 @@ grep -h -E "^bank|^tile" /work/out/filter_v9b.log | tail -4
 echo "=== RESULT END"
 } 2>&1
 trap - ERR
-bye
+bye 180
