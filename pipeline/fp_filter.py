@@ -206,7 +206,7 @@ def main():
         nxt_job = None
         wfuts = []
         T = dict(prep_s=0.0, load_s=0.0, templates_s=0.0, norm_s=0.0, svd_s=0.0, basis_fft_s=0.0, gemm_s=0.0,
-                 refine_chisq_s=0.0, n_candidates=0, n_chisq_points=0, rf_q_s=0.0, rf_edges_s=0.0, rf_kernel_s=0.0, rebuilt_z_s=0.0, n_exact_candidates=0, n_rebuilt_peaks=0)
+                 refine_chisq_s=0.0, timing='v9: basis_fft_s, gemm_s, rebuilt_z_s are GPU event times; refine_chisq_s host wall of the back', n_candidates=0, n_chisq_points=0, rf_q_s=0.0, rf_edges_s=0.0, rf_kernel_s=0.0, rebuilt_z_s=0.0, n_exact_candidates=0, n_rebuilt_peaks=0)
         t_start = time.perf_counter()
         for d in ('peaks', 'prep'):
             os.makedirs(os.path.join(a.out, d), exist_ok=True)
@@ -255,6 +255,9 @@ def main():
         from imr_interp import coarse_grid, coarse_generate, FineInterpolator
         dev = 'cuda'
         sync = torch.cuda.synchronize
+        from seg_pipe import BackStream, EventClock, SegmentPipe
+        bstream = cached(('bstream',), lambda: BackStream(torch, cp))   # one back stream per process (seg_pipe.py)
+        bsync = bstream.synchronize
         opt, _ = pycbc_parser().parse_known_args(base)
         chisq_bins = opt.chisq_bins.strip('"\'')
         do_chisq = chisq_bins not in ('', '0')
@@ -596,20 +599,22 @@ def main():
 
           def basis_series(Vh, Dws, a0, Tn):
               """Z (Kp x Tn) fp16: rows 0..r-1 real and r..2r-1 imag parts of the r basis series over the analysed span,
-              divided by their rms; returns Z and that scale."""
+              divided by their rms; returns Z and that scale as a 0-d float32 device tensor (no host sync). The division
+              is a multiply by the float32 reciprocal: what CUDA torch does for a Python-float divisor (v8), bit for bit."""
               r = Vh.shape[0]
               Kp = ((2 * r + 63) // 64) * 64
               Z = torch.zeros((Kp, Tn), dtype=torch.float16, device=dev)
-              scale = None
+              scale = inv = None
               for c0 in range(0, r, RB):
                   nb = min(RB, r - c0)
                   qq = qz[:nb]; qq.zero_()
                   qq[:, :flen] = torch.conj(Vh[c0:c0 + nb]) * Dws
                   zb = torch.fft.ifft(qq, dim=1, norm='forward')[:, a0:a0 + Tn]
                   if scale is None:
-                      scale = float(torch.sqrt((zb.real ** 2 + zb.imag ** 2).mean() / 2).item())
-                  Z[c0:c0 + nb] = (zb.real / scale).half()
-                  Z[r + c0:r + c0 + nb] = (zb.imag / scale).half()
+                      scale = torch.sqrt((zb.real ** 2 + zb.imag ** 2).mean() / 2)
+                      inv = torch.reciprocal(scale)
+                  Z[c0:c0 + nb] = (zb.real * inv).half()
+                  Z[r + c0:r + c0 + nb] = (zb.imag * inv).half()
               return Z, scale
 
           def stacked_A(A, nrm_s, scale, Kp):
@@ -716,20 +721,194 @@ def main():
               r, A, Vh, worst = svd_tile(H)
               sync(); t3 = time.perf_counter(); T['svd_s'] += t3 - t2
               T['tiles'].append(dict(bank=bank_i, n=n, r=r, worst_lost_power=worst))
-              Hc = cp.from_dlpack(H)
-              stage = None
-              # regen's kernel needs chi-squared bins >= exact_stage.R fine bins; short --chunk2 chunks (df 1/8 Hz) give
-              # narrower low-frequency bins, so a chunked bank takes the dense exact path on its full templates H
-              if a.exact_stage == 'regen' and not (bank_i == 1 and a.chunk2):
-                  stage = ExactStage(TemplateTile(Hc, nbins_all[ids], kmin, kmax_all[ids],
-                                                  Coarse(grid, coarse_now['amp'], coarse_now['coef'])))
+              # v9: depth-1 pipeline (seg_pipe.py): the front of segment s+1 (basis FFTs, GEMM + peaks) runs on the default
+              # stream while the host does segment s's back (exact stage, sg_chisq, bookkeeping) on the back stream
+              sig_h, norm_h = sig.cpu().numpy(), norm.cpu().numpy()     # one copy per tile, not per segment
+              bstream.after_front()
+              with bstream:
+                  Hc = cp.from_dlpack(H)
+                  stage = None
+                  # regen's kernel needs chi-squared bins >= exact_stage.R fine bins; short --chunk2 chunks (df 1/8 Hz) give
+                  # narrower low-frequency bins, so a chunked bank takes the dense exact path on its full templates H
+                  if a.exact_stage == 'regen' and not (bank_i == 1 and a.chunk2):
+                      stage = ExactStage(TemplateTile(Hc, nbins_all[ids], kmin, kmax_all[ids],
+                                                      Coarse(grid, coarse_now['amp'], coarse_now['coef'])))
               if gate_on:
                   mc_lo, mc_hi = mc_all[ids].min() / a.gate_mc_ratio, mc_all[ids].max() * a.gate_mc_ratio
+
+              def front_launch(m, s, a0, nw, Tn, gs):
+                  """Enqueue segment s's GPU front; no host sync."""
+                  with clock.span('basis_fft_s'):
+                      Z, scale = basis_series(Vh, m['D'][s] * isw, a0, Tn)
+                  with clock.span('gemm_s'):
+                      Are, Aim = stacked_A(A, norm[:, gs], scale, Z.shape[0])
+                      V, I = fused_peaks(Are, Aim, Z, n, Tn, KCFG)
+                      vw, jj = V.view(n, nw, cw // BN).max(2)
+                      iw = I.view(n, nw, cw // BN).gather(2, jj[..., None])[..., 0]
+                  return dict(m=m, s=s, a0=a0, gs=gs, Z=Z, Are=Are, Aim=Aim, vw=vw, iw=iw, gsel=None)
+
+              def front_collect(f):
+                  """Candidate selection on the GPU (syncs the default stream for nonzero), then host copies only."""
+                  ts_ = time.perf_counter()
+                  m, s, a0, vw, iw, Z, Are, Aim = f['m'], f['s'], f['a0'], f['vw'], f['iw'], f['Z'], f['Are'], f['Aim']
+                  tb, wb = torch.nonzero(vw > (thr * (1 - a.margin)) ** 2, as_tuple=True)
+                  il = iw[tb, wb]
+                  if a.pre_consolidate:
+                      kp = pre_keep(m, s, a0 + il, torch.sqrt(vw[tb, wb]))
+                      tb, wb, il = tb[kp], wb[kp], il[kp]
+                  samp = (a0 + il).cpu().numpy().astype(np.int64)
+                  approx = torch.sqrt(vw[tb, wb]).cpu().numpy()
+                  if f['gsel'] is not None:
+                      k_ = near(samp, f['gsel'], gw_s); kt = torch.from_numpy(k_).to(dev)
+                      T['gate_peaks_dropped'] += int((~k_).sum())
+                      tb, il, samp, approx = tb[kt], il[kt], samp[k_], approx[k_]
+                  # rebuilt complex SNR at each candidate: the same A @ Z the GEMM did, for one column
+                  with clock.span('rebuilt_z_s'):
+                      zl = []
+                      for c0 in range(0, len(samp), 1 << 18):
+                          Zs = Z[:, il[c0:c0 + (1 << 18)]].T.float(); tt_ = tb[c0:c0 + (1 << 18)]
+                          zr_ = (Are[tt_].float() * Zs).sum(1); zi_ = (Aim[tt_].float() * Zs).sum(1)
+                          zl.append(torch.complex(zr_, zi_))
+                  zreb = torch.cat(zl).cpu().numpy() if zl else np.zeros(0, np.complex64)
+                  tb = tb.cpu().numpy()
+                  T['select_s'] = T.get('select_s', 0.0) + time.perf_counter() - ts_
+                  return dict(m=m, s=s, gs=f['gs'], tb=tb, samp=samp, approx=approx, zreb=zreb)
+
+              def back(c):
+                  """v8's per-segment refine, unchanged except: host copies of sig/norm, and the back stream's sync."""
+                  t2 = time.perf_counter()
+                  m, s, gs, tb, samp, approx, zreb = c['m'], c['s'], c['gs'], c['tb'], c['samp'], c['approx'], c['zreb']
+                  # peaks below the exact cut keep their rebuilt values; the rest go to the exact stage
+                  ex = approx >= a.exact_snr * (1 - a.margin)
+                  rb = ~ex & (approx > thr)
+                  if rb.any():
+                      o = m['out']; tid_r = ids[tb[rb]]; nrb = int(rb.sum())
+                      o['tid'].append(tid_r); o['t'].append(m['gps_start'] + (m['seg_start'][s] + samp[rb]) / sr)
+                      o['snr'].append(approx[rb]); o['ph'].append(np.angle(zreb[rb]).astype(np.float32))
+                      o['sg'].append(sig_h[:, gs][tb[rb]].astype(np.float64)); o['ex'].append(np.zeros(nrb, bool))
+                      if do_chisq:
+                          o['chi'].append(np.zeros(nrb, np.float32)); o['dof'].append(np.zeros(nrb, np.int32))
+                          if do_sg:
+                              o['sgc'].append(np.ones(nrb, np.float32)); o['sgd'].append(np.zeros(nrb, bool))
+                      T['n_rebuilt_peaks'] += nrb
+                  tb, samp, approx, zreb = tb[ex], samp[ex], approx[ex], zreb[ex]
+                  T['n_exact_candidates'] += len(tb)
+                  # exact complex SNR (and chi-squared) at each candidate, from the exact template
+                  T['n_candidates'] += len(tb)
+                  zx = np.zeros(len(tb), np.complex64); pw = np.zeros(len(tb), np.float32); fpk = np.zeros(len(tb))
+                  ur = np.unique(tb)
+                  ot = np.argsort(tb, kind='stable'); tbs = tb[ot]
+                  Dc, IPc = cp.from_dlpack(m['D'][s]), cp.from_dlpack(m['IP'][s])
+                  if stage is not None and len(tb):
+                      tk = time.perf_counter()
+                      pv = stage.evaluate(SegmentData(Dc, IPc, df, tlen), PeakRequest(tb, samp))
+                      zx, pw, fpk = pv.z, pv.pw, pv.fpeak
+                      bsync(); T['rf_kernel_s'] += time.perf_counter() - tk
+                      ur = ur[:0]
+                  for c0 in range(0, len(ur), QB):
+                      rows = ur[c0:c0 + QB]
+                      sel = ot[np.searchsorted(tbs, rows[0]):np.searchsorted(tbs, rows[-1], side='right')]
+                      loc = np.searchsorted(rows, tb[sel])
+                      tq = time.perf_counter()
+                      need_hs = not a.fuse_q or (do_chisq and (a.edges != 'fused' or 'edges_check' not in T))
+                      Hs = Hc[cp.asarray(rows)] if need_hs else None
+                      if not a.fuse_q:
+                          qv = qbuf[:len(rows)]
+                          if a.legacy_qzero:
+                              qv[:, flen:] = 0          # the kernel never reads above flen and qbuf starts zeroed
+                          qv[:, :flen] = cp.conj(Hs) * Dc[None, :]
+                      tids = ids[rows]
+                      bsync(); te = time.perf_counter(); T['rf_q_s'] += te - tq
+                      if do_chisq:
+                          if a.edges == 'fused':
+                              E = edges_fused(cp, rows, nbins_all[tids], kmin, kmax_all[tids], Hc, IPc)[loc]
+                              if 'edges_check' not in T:    # once per run, on the GPU: fused edges against the full float64 ones
+                                  E0 = edges_per_template(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
+                                  T['edges_check'] = dict(n=int(E.size), n_diff=int((E != E0).sum()),
+                                                          max_abs_diff=int(np.abs(E - E0).max()))
+                                  assert T['edges_check']['max_abs_diff'] <= 1, T['edges_check']
+                          elif a.edges == 'full':
+                              E = edges_per_template(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
+                          else:
+                              E = edges_blocked(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
+                              if 'edges_check' not in T:    # once per run, on the GPU: blocked edges must equal the full ones
+                                  E0 = edges_per_template(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
+                                  T['edges_check'] = dict(n=int(E.size), n_diff=int((E != E0).sum()))
+                                  assert T['edges_check']['n_diff'] == 0, T['edges_check']
+                          nbp = nbins_all[tids[loc]]; r_ = np.arange(len(sel))
+                          # sine-Gaussian reference frequency, pycbc's (bins[-2] + (bins[-2] - bins[-3])) * df
+                          fpk[sel] = (2 * E[r_, np.maximum(nbp - 1, 0)] - E[r_, np.maximum(nbp - 2, 0)]) * df
+                      else:
+                          E = np.stack([kmin_all[tids[loc]], kmax_all[tids[loc]]], 1)
+                      bsync(); tk = time.perf_counter(); T['rf_edges_s'] += tk - te
+                      if a.fuse_q:
+                          pw[sel], zx[sel] = bin_power_sums(Hc, rows[loc], samp[sel], E, want_z=True, d=Dc, n_time=tlen)
+                      else:
+                          pw[sel], zx[sel] = bin_power_sums(qv, loc, samp[sel], E, want_z=True)
+                      bsync(); T['rf_kernel_s'] += time.perf_counter() - tk
+                      del Hs
+                  nr = norm_h[:, gs][tb]
+                  snr = np.abs(zx) * nr
+                  if len(tb):
+                      rel.append(approx / np.maximum(snr, 1e-30))
+                      dph.append(np.angle(zreb * np.conj(zx)))
+                  keep = snr > thr
+                  tb, samp, snr, zx, pw, nr, fpk = tb[keep], samp[keep], snr[keep], zx[keep], pw[keep], nr[keep], fpk[keep]
+                  tid = ids[tb]
+                  o = m['out']
+                  o['tid'].append(tid); o['t'].append(m['gps_start'] + (m['seg_start'][s] + samp) / sr)
+                  o['snr'].append(snr); o['ph'].append(np.angle(zx).astype(np.float32)); o['ex'].append(np.ones(len(tb), bool))
+                  o['sg'].append(sig_h[:, gs][tb].astype(np.float64))
+                  if do_chisq:
+                      chi_ = ((nbins_all[tid] * pw - np.abs(zx) ** 2) * nr ** 2).astype(np.float32)
+                      dof_ = (2 * nbins_all[tid] - 2).astype(np.int32)
+                      o['chi'].append(chi_); o['dof'].append(dof_)
+                      T['n_chisq_points'] += int(len(tid))
+                      if do_sg:
+                          ts_ = time.perf_counter()
+                          sgv = np.ones(len(tid), np.float32); sgd = np.zeros(len(tid), bool)
+                          ns_ = newsnr(snr, chi_ / np.maximum(dof_, 1))
+                          cand = [i for i in np.nonzero(ns_ >= sgo.sgchisq_snr_threshold)[0] if sg_locs[tid[i]] is not None]
+                          if a.sg_batch and cand:
+                              cand = np.array(cand)
+                              groups = {}
+                              for i in cand:
+                                  groups.setdefault(tuple(sg_locs[tid[i]]), []).append(i)
+                              for vals_, gi in groups.items():
+                                  gi = np.array(gi)
+                                  if a.sg_kernel:
+                                      v_, ok_ = sg_chisq_points(Dc, IPc, samp[gi], fpk[gi], list(vals_), kmin_all[tid[gi]], df, tlen)
+                                  else:
+                                      v_, ok_ = sg_chisq_batch(Dc, IPc, samp[gi], fpk[gi], list(vals_), kmin_all[tid[gi]])
+                                  sgv[gi[ok_]] = v_[ok_]; sgd[gi[ok_]] = True
+                              if 'sg_batch_check' not in T:    # once per run: batched values equal the per-peak ones
+                                  i0 = cand[:64 if a.sg_kernel else 4]
+                                  ref = [sg_chisq_one(Dc, IPc, samp[i], fpk[i], sg_locs[tid[i]], int(kmin_all[tid[i]])) for i in i0]
+                                  d_ = [abs(sgv[i] - r_) / max(abs(r_), 1e-30) for i, r_ in zip(i0, ref) if r_ is not None]
+                                  T['sg_batch_check'] = dict(n=len(d_), max_rel=float(max(d_)) if d_ else 0.0)
+                                  assert T['sg_batch_check']['max_rel'] < (1e-4 if a.sg_kernel else 1e-6), T['sg_batch_check']
+                              cand = []
+                          for i in cand:
+                              v = sg_chisq_one(Dc, IPc, samp[i], fpk[i], sg_locs[tid[i]], int(kmin_all[tid[i]]))
+                              if v is not None:
+                                  sgv[i] = v; sgd[i] = True
+                          o['sgc'].append(sgv); o['sgd'].append(sgd)
+                          T['n_sg_chisq_points'] += int(sgd.sum()); T['sg_chisq_s'] += time.perf_counter() - ts_
+                  bsync(); T['refine_chisq_s'] += time.perf_counter() - t2
+
+              def finish_dataset(m):
+                  m.setdefault('sig', np.zeros((ntmp, len(m['first']))))[ids] = sig_h[:, m['seg0'] + np.asarray(m['first'])]
+                  if a.consolidate:
+                      # --pre-consolidate: on a CPU thread while the GPU filters the other datasets (cwait before m is next used)
+                      m['cfut'] = cons_pool.submit(consolidate, m) if a.pre_consolidate else consolidate(m)
+
+              clock = EventClock(torch); pipe = SegmentPipe(back, bstream)
               for m in metas:
                   cwait(m)
                   for s, (a0, a1) in enumerate(m['analyze']):
                       gs = m['seg0'] + s
                       nw = m['NW'][s]; Tn = nw * cw
+                      gsel = None
                       if gate_on:
                           gsamp, gmc = m['gate'][s]
                           gsel = gsamp[(gmc >= mc_lo) & (gmc <= mc_hi)]
@@ -737,155 +916,13 @@ def main():
                               T['gate_skips'] += 1
                               continue
                           T['gate_runs'] += 1
-                      sync(); t0 = time.perf_counter()
-                      Z, scale = basis_series(Vh, m['D'][s] * isw, a0, Tn)
-                      sync(); t1 = time.perf_counter(); T['basis_fft_s'] += t1 - t0
-                      Are, Aim = stacked_A(A, norm[:, gs], scale, Z.shape[0])
-                      V, I = fused_peaks(Are, Aim, Z, n, Tn, KCFG)
-                      vw, jj = V.view(n, nw, cw // BN).max(2)
-                      iw = I.view(n, nw, cw // BN).gather(2, jj[..., None])[..., 0]
-                      tb, wb = torch.nonzero(vw > (thr * (1 - a.margin)) ** 2, as_tuple=True)
-                      il = iw[tb, wb]
-                      if a.pre_consolidate:
-                          kp = pre_keep(m, s, a0 + il, torch.sqrt(vw[tb, wb]))
-                          tb, wb, il = tb[kp], wb[kp], il[kp]
-                      samp = (a0 + il).cpu().numpy().astype(np.int64)
-                      approx = torch.sqrt(vw[tb, wb]).cpu().numpy()
-                      if gate_on:
-                          k_ = near(samp, gsel, gw_s); kt = torch.from_numpy(k_).to(dev)
-                          T['gate_peaks_dropped'] += int((~k_).sum())
-                          tb, il, samp, approx = tb[kt], il[kt], samp[k_], approx[k_]
-                      sync(); tz = time.perf_counter(); T['gemm_s'] += tz - t1
-                      # rebuilt complex SNR at each candidate: the same A @ Z the GEMM did, for one column
-                      zreb = np.zeros(len(samp), np.complex64)
-                      for c0 in range(0, len(samp), 1 << 18):
-                          Zs = Z[:, il[c0:c0 + (1 << 18)]].T.float(); tt_ = tb[c0:c0 + (1 << 18)]
-                          zr_ = (Are[tt_].float() * Zs).sum(1); zi_ = (Aim[tt_].float() * Zs).sum(1)
-                          zreb[c0:c0 + len(tt_)] = torch.complex(zr_, zi_).cpu().numpy()
-                      tb = tb.cpu().numpy()
-                      del Z, V, I, vw, jj, iw, il, Are, Aim
-                      sync(); t2 = time.perf_counter(); T['rebuilt_z_s'] += t2 - tz
-                      # peaks below the exact cut keep their rebuilt values; the rest go to the exact stage
-                      ex = approx >= a.exact_snr * (1 - a.margin)
-                      rb = ~ex & (approx > thr)
-                      if rb.any():
-                          o = m['out']; tid_r = ids[tb[rb]]; nrb = int(rb.sum())
-                          o['tid'].append(tid_r); o['t'].append(m['gps_start'] + (m['seg_start'][s] + samp[rb]) / sr)
-                          o['snr'].append(approx[rb]); o['ph'].append(np.angle(zreb[rb]).astype(np.float32))
-                          o['sg'].append(sig[:, gs].cpu().numpy()[tb[rb]].astype(np.float64)); o['ex'].append(np.zeros(nrb, bool))
-                          if do_chisq:
-                              o['chi'].append(np.zeros(nrb, np.float32)); o['dof'].append(np.zeros(nrb, np.int32))
-                              if do_sg:
-                                  o['sgc'].append(np.ones(nrb, np.float32)); o['sgd'].append(np.zeros(nrb, bool))
-                          T['n_rebuilt_peaks'] += nrb
-                      tb, samp, approx, zreb = tb[ex], samp[ex], approx[ex], zreb[ex]
-                      T['n_exact_candidates'] += len(tb)
-                      # exact complex SNR (and chi-squared) at each candidate, from the exact template
-                      T['n_candidates'] += len(tb)
-                      zx = np.zeros(len(tb), np.complex64); pw = np.zeros(len(tb), np.float32); fpk = np.zeros(len(tb))
-                      ur = np.unique(tb)
-                      ot = np.argsort(tb, kind='stable'); tbs = tb[ot]
-                      Dc, IPc = cp.from_dlpack(m['D'][s]), cp.from_dlpack(m['IP'][s])
-                      if stage is not None and len(tb):
-                          tk = time.perf_counter()
-                          pv = stage.evaluate(SegmentData(Dc, IPc, df, tlen), PeakRequest(tb, samp))
-                          zx, pw, fpk = pv.z, pv.pw, pv.fpeak
-                          sync(); T['rf_kernel_s'] += time.perf_counter() - tk
-                          ur = ur[:0]
-                      for c0 in range(0, len(ur), QB):
-                          rows = ur[c0:c0 + QB]
-                          sel = ot[np.searchsorted(tbs, rows[0]):np.searchsorted(tbs, rows[-1], side='right')]
-                          loc = np.searchsorted(rows, tb[sel])
-                          tq = time.perf_counter()
-                          need_hs = not a.fuse_q or (do_chisq and (a.edges != 'fused' or 'edges_check' not in T))
-                          Hs = Hc[cp.asarray(rows)] if need_hs else None
-                          if not a.fuse_q:
-                              qv = qbuf[:len(rows)]
-                              if a.legacy_qzero:
-                                  qv[:, flen:] = 0          # the kernel never reads above flen and qbuf starts zeroed
-                              qv[:, :flen] = cp.conj(Hs) * Dc[None, :]
-                          tids = ids[rows]
-                          sync(); te = time.perf_counter(); T['rf_q_s'] += te - tq
-                          if do_chisq:
-                              if a.edges == 'fused':
-                                  E = edges_fused(cp, rows, nbins_all[tids], kmin, kmax_all[tids], Hc, IPc)[loc]
-                                  if 'edges_check' not in T:    # once per run, on the GPU: fused edges against the full float64 ones
-                                      E0 = edges_per_template(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
-                                      T['edges_check'] = dict(n=int(E.size), n_diff=int((E != E0).sum()),
-                                                              max_abs_diff=int(np.abs(E - E0).max()))
-                                      assert T['edges_check']['max_abs_diff'] <= 1, T['edges_check']
-                              elif a.edges == 'full':
-                                  E = edges_per_template(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
-                              else:
-                                  E = edges_blocked(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
-                                  if 'edges_check' not in T:    # once per run, on the GPU: blocked edges must equal the full ones
-                                      E0 = edges_per_template(cp, loc, nbins_all[tids[loc]], kmin, kmax_all[tids[loc]], Hs, IPc)
-                                      T['edges_check'] = dict(n=int(E.size), n_diff=int((E != E0).sum()))
-                                      assert T['edges_check']['n_diff'] == 0, T['edges_check']
-                              nbp = nbins_all[tids[loc]]; r_ = np.arange(len(sel))
-                              # sine-Gaussian reference frequency, pycbc's (bins[-2] + (bins[-2] - bins[-3])) * df
-                              fpk[sel] = (2 * E[r_, np.maximum(nbp - 1, 0)] - E[r_, np.maximum(nbp - 2, 0)]) * df
-                          else:
-                              E = np.stack([kmin_all[tids[loc]], kmax_all[tids[loc]]], 1)
-                          sync(); tk = time.perf_counter(); T['rf_edges_s'] += tk - te
-                          if a.fuse_q:
-                              pw[sel], zx[sel] = bin_power_sums(Hc, rows[loc], samp[sel], E, want_z=True, d=Dc, n_time=tlen)
-                          else:
-                              pw[sel], zx[sel] = bin_power_sums(qv, loc, samp[sel], E, want_z=True)
-                          sync(); T['rf_kernel_s'] += time.perf_counter() - tk
-                          del Hs
-                      nr = norm[:, gs].cpu().numpy()[tb]
-                      snr = np.abs(zx) * nr
-                      if len(tb):
-                          rel.append(approx / np.maximum(snr, 1e-30))
-                          dph.append(np.angle(zreb * np.conj(zx)))
-                      keep = snr > thr
-                      tb, samp, snr, zx, pw, nr, fpk = tb[keep], samp[keep], snr[keep], zx[keep], pw[keep], nr[keep], fpk[keep]
-                      tid = ids[tb]
-                      o = m['out']
-                      o['tid'].append(tid); o['t'].append(m['gps_start'] + (m['seg_start'][s] + samp) / sr)
-                      o['snr'].append(snr); o['ph'].append(np.angle(zx).astype(np.float32)); o['ex'].append(np.ones(len(tb), bool))
-                      o['sg'].append(sig[:, gs].cpu().numpy()[tb].astype(np.float64))
-                      if do_chisq:
-                          chi_ = ((nbins_all[tid] * pw - np.abs(zx) ** 2) * nr ** 2).astype(np.float32)
-                          dof_ = (2 * nbins_all[tid] - 2).astype(np.int32)
-                          o['chi'].append(chi_); o['dof'].append(dof_)
-                          T['n_chisq_points'] += int(len(tid))
-                          if do_sg:
-                              ts_ = time.perf_counter()
-                              sgv = np.ones(len(tid), np.float32); sgd = np.zeros(len(tid), bool)
-                              ns_ = newsnr(snr, chi_ / np.maximum(dof_, 1))
-                              cand = [i for i in np.nonzero(ns_ >= sgo.sgchisq_snr_threshold)[0] if sg_locs[tid[i]] is not None]
-                              if a.sg_batch and cand:
-                                  cand = np.array(cand)
-                                  groups = {}
-                                  for i in cand:
-                                      groups.setdefault(tuple(sg_locs[tid[i]]), []).append(i)
-                                  for vals_, gi in groups.items():
-                                      gi = np.array(gi)
-                                      if a.sg_kernel:
-                                          v_, ok_ = sg_chisq_points(Dc, IPc, samp[gi], fpk[gi], list(vals_), kmin_all[tid[gi]], df, tlen)
-                                      else:
-                                          v_, ok_ = sg_chisq_batch(Dc, IPc, samp[gi], fpk[gi], list(vals_), kmin_all[tid[gi]])
-                                      sgv[gi[ok_]] = v_[ok_]; sgd[gi[ok_]] = True
-                                  if 'sg_batch_check' not in T:    # once per run: batched values equal the per-peak ones
-                                      i0 = cand[:64 if a.sg_kernel else 4]
-                                      ref = [sg_chisq_one(Dc, IPc, samp[i], fpk[i], sg_locs[tid[i]], int(kmin_all[tid[i]])) for i in i0]
-                                      d_ = [abs(sgv[i] - r_) / max(abs(r_), 1e-30) for i, r_ in zip(i0, ref) if r_ is not None]
-                                      T['sg_batch_check'] = dict(n=len(d_), max_rel=float(max(d_)) if d_ else 0.0)
-                                      assert T['sg_batch_check']['max_rel'] < (1e-4 if a.sg_kernel else 1e-6), T['sg_batch_check']
-                                  cand = []
-                              for i in cand:
-                                  v = sg_chisq_one(Dc, IPc, samp[i], fpk[i], sg_locs[tid[i]], int(kmin_all[tid[i]]))
-                                  if v is not None:
-                                      sgv[i] = v; sgd[i] = True
-                              o['sgc'].append(sgv); o['sgd'].append(sgd)
-                              T['n_sg_chisq_points'] += int(sgd.sum()); T['sg_chisq_s'] += time.perf_counter() - ts_
-                      sync(); T['refine_chisq_s'] += time.perf_counter() - t2
-                  m.setdefault('sig', np.zeros((ntmp, len(m['first']))))[ids] = sig[:, m['seg0'] + np.asarray(m['first'])].cpu().numpy()
-                  if a.consolidate:
-                      # --pre-consolidate: on a CPU thread while the GPU filters the other datasets (cwait before m is next used)
-                      m['cfut'] = cons_pool.submit(consolidate, m) if a.pre_consolidate else consolidate(m)
+                      def launch(m=m, s=s, a0=a0, nw=nw, Tn=Tn, gs=gs, gsel=gsel):
+                          f = front_launch(m, s, a0, nw, Tn, gs); f['gsel'] = gsel
+                          return f
+                      pipe.step(launch, front_collect)
+                  pipe.then(lambda m=m: finish_dataset(m))
+              tw_ = time.perf_counter(); pipe.drain(); T['drain_s'] = T.get('drain_s', 0.0) + time.perf_counter() - tw_
+              clock.flush(T)
               if stage is not None:
                   T.setdefault('regen_check', []).append(stage.check)
               del H, Hc, h, A, Vh, sig, norm, stage     # h (a view) kept the whole H alive into the next tile: 2 x 4 GiB at once
