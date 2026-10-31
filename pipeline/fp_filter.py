@@ -255,6 +255,7 @@ def main():
         from imr_interp import coarse_grid, coarse_generate, FineInterpolator
         dev = 'cuda'
         sync = torch.cuda.synchronize
+        from gpu_profile import gpu_profile
         opt, _ = pycbc_parser().parse_known_args(base)
         chisq_bins = opt.chisq_bins.strip('"\'')
         do_chisq = chisq_bins not in ('', '0')
@@ -592,7 +593,7 @@ def main():
               A = (Wr * s_r[None, :]).conj() * nrm[:, None]                  # z = A @ IFFT(conj(Vh) D / sw)
               return r, A, Vh, float(worst[r - 1].item())
 
-          qz = torch.zeros((RB, tlen), dtype=torch.complex64, device=dev)
+          qz = torch.zeros((RB, tlen), dtype=torch.complex64, device=dev)    # only [:, :flen] is ever written: the rest stays 0
 
           def basis_series(Vh, Dws, a0, Tn):
               """Z (Kp x Tn) fp16: rows 0..r-1 real and r..2r-1 imag parts of the r basis series over the analysed span,
@@ -603,7 +604,7 @@ def main():
               scale = None
               for c0 in range(0, r, RB):
                   nb = min(RB, r - c0)
-                  qq = qz[:nb]; qq.zero_()
+                  qq = qz[:nb]
                   qq[:, :flen] = torch.conj(Vh[c0:c0 + nb]) * Dws
                   zb = torch.fft.ifft(qq, dim=1, norm='forward')[:, a0:a0 + Tn]
                   if scale is None:
@@ -725,6 +726,7 @@ def main():
                                                   Coarse(grid, coarse_now['amp'], coarse_now['coef'])))
               if gate_on:
                   mc_lo, mc_hi = mc_all[ids].min() / a.gate_mc_ratio, mc_all[ids].max() * a.gate_mc_ratio
+              prof = gpu_profile(memo.get('n_groups', 0), bank_i, ti)
               for m in metas:
                   cwait(m)
                   for s, (a0, a1) in enumerate(m['analyze']):
@@ -886,6 +888,8 @@ def main():
                   if a.consolidate:
                       # --pre-consolidate: on a CPU thread while the GPU filters the other datasets (cwait before m is next used)
                       m['cfut'] = cons_pool.submit(consolidate, m) if a.pre_consolidate else consolidate(m)
+              if prof is not None:
+                  T.setdefault('profile', {})[f'bank{bank_i}_tile{ti}'] = prof.finish(sync)
               if stage is not None:
                   T.setdefault('regen_check', []).append(stage.check)
               del H, Hc, h, A, Vh, sig, norm, stage     # h (a view) kept the whole H alive into the next tile: 2 x 4 GiB at once
