@@ -599,12 +599,12 @@ def main():
 
           def basis_series(Vh, Dws, a0, Tn):
               """Z (Kp x Tn) fp16: rows 0..r-1 real and r..2r-1 imag parts of the r basis series over the analysed span,
-              divided by their rms; returns Z and that scale as a 0-d float32 device tensor (no host sync). The division
-              is a multiply by the float32 reciprocal: what CUDA torch does for a Python-float divisor (v8), bit for bit."""
+              divided by their rms; returns Z and that scale as a 0-d float32 device tensor (no host sync; v8 divided by
+              its Python float, test_scale_gpu.py checks the bits are the same)."""
               r = Vh.shape[0]
               Kp = ((2 * r + 63) // 64) * 64
               Z = torch.zeros((Kp, Tn), dtype=torch.float16, device=dev)
-              scale = inv = None
+              scale = None
               for c0 in range(0, r, RB):
                   nb = min(RB, r - c0)
                   qq = qz[:nb]; qq.zero_()
@@ -612,9 +612,8 @@ def main():
                   zb = torch.fft.ifft(qq, dim=1, norm='forward')[:, a0:a0 + Tn]
                   if scale is None:
                       scale = torch.sqrt((zb.real ** 2 + zb.imag ** 2).mean() / 2)
-                      inv = torch.reciprocal(scale)
-                  Z[c0:c0 + nb] = (zb.real * inv).half()
-                  Z[r + c0:r + c0 + nb] = (zb.imag * inv).half()
+                  Z[c0:c0 + nb] = (zb.real / scale).half()
+                  Z[r + c0:r + c0 + nb] = (zb.imag / scale).half()
               return Z, scale
 
           def stacked_A(A, nrm_s, scale, Kp):
