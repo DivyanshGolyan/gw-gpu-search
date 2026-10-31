@@ -2,7 +2,7 @@
 # One-shot Vast box: A/B of fp_filter v9 (seg_pipe.py overlap) against the frozen v8 on two O4a wk09 groups.
 # Runs v8, v9, v8, v9 on the same downloaded data (first run also warms the kernel caches), then prints one RESULT
 # block (bitwise peak comparison, counters, timings, GPU busy) to the container log and destroys the box.
-# Env: BRANCH (git branch with v9), MAXMIN (kill timer, minutes; default 70).
+# Env: BRANCH (git branch with v9), COMMIT (optional, checked out), MAXMIN (kill timer, minutes; default 70).
 set -uo pipefail
 mkdir -p /work/out; touch /work/out/log; (tail -n +1 -F /work/out/log > /proc/1/fd/1 2>/dev/null &); exec >> /work/out/log 2>&1
 say() { echo "AB $(date -u +%T) $*"; }
@@ -13,7 +13,7 @@ set -e
 cd /work
 apt-get update -qq > /dev/null && apt-get install -y -qq git curl unzip libgsl-dev swig > /dev/null
 git clone -q --depth 5 -b "$BRANCH" https://github.com/divyanshgolyan/gw-gpu-search r
-cd r; git fetch -q --depth 1 origin main; git show FETCH_HEAD:pipeline/fp_filter.py > pipeline/fp_filter_v8.py
+cd r; [ -n "${COMMIT:-}" ] && git checkout -q "$COMMIT"; git fetch -q --depth 1 origin main; git show FETCH_HEAD:pipeline/fp_filter.py > pipeline/fp_filter_v8.py
 [ "$(md5sum < pipeline/fp_filter_v8.py | cut -c1-32)" = 436c31dc879cc3a4d874dccf5153d700 ] || { say "v8 md5 wrong"; false; }
 say "code $(git rev-parse --short HEAD); v9 $(md5sum < pipeline/fp_filter.py | cut -c1-8)"
 # GWOSC's chain ends at emSign Root CA - G1, which certifi 2024.2.2 still carries
